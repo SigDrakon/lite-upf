@@ -1,108 +1,41 @@
 # AGENTS.md - Technical Notes for lite-upf
 
-This file contains project-specific guidance for AI coding agents and future development sessions. Treat it as the operational companion to `README.md`: the README can describe the project to users; this file records implementation direction, engineering constraints, conventions, and common pitfalls for agents modifying the codebase.
+This file contains technical details, architectural decisions, and important implementation notes for future development sessions.
 
-The repository is currently minimal, so this document intentionally defines a starting architecture and working assumptions rather than documenting a mature implementation.
+It is adapted from the style and structure of Karpathy's `CLAUDE.md`: a compact project memory file for coding agents. The content below is rewritten for `lite-upf`, not copied as an LLM Council implementation.
 
 ## Project Overview
 
-`lite-upf` is intended to be a lightweight User Plane Function (UPF) implementation or UPF-oriented runtime component.
+`lite-upf` is a lightweight User Plane Function (UPF) project. The intended design is a small, inspectable UPF implementation focused on PFCP control-plane state, GTP-U data-plane handling, and deterministic lab/debug behavior.
 
-The likely scope is narrower than a production-grade 5G core UPF. Prioritize clarity, testability, and incremental protocol support over broad feature coverage.
+The key innovation should be simplicity: keep the UPF small enough that packet flow, session state, and forwarding decisions are easy to inspect and modify.
 
-Core goals:
+## Architecture
 
-- Implement a small, understandable UPF data-plane/control-plane core.
-- Support PFCP-driven session and forwarding rule management where applicable.
-- Support GTP-U packet handling on the N3 side.
-- Provide deterministic behavior suitable for lab validation and future automated tests.
-- Keep dependencies and runtime assumptions minimal.
+The repository is currently minimal, so the architecture below records the intended structure for future implementation.
 
-## Repository Status
+### Command Structure (`cmd/`)
 
-At the time this file was added, the repository only contained a minimal `README.md`. Do not assume existing package layout, build system, or runtime architecture until files are added.
+**`cmd/lite-upf/main.go`**
+- Program entry point.
+- Loads configuration.
+- Initializes logging.
+- Starts the PFCP/N4 control-plane listener.
+- Starts the GTP-U/N3 data-plane listener.
+- Handles graceful shutdown.
 
-When creating the initial implementation, prefer a small structure that can grow without becoming obscure.
+The binary should be runnable from the repository root without hard-coded lab paths.
 
-Suggested initial layout if using Go:
+### Configuration Structure (`internal/config/` or `config/`)
 
-```text
-cmd/lite-upf/          CLI entry point
-internal/config/      configuration loading and validation
-internal/pfcp/        PFCP server/session/rule handling
-internal/gtpu/        GTP-U socket, parsing, encapsulation
-internal/session/     session, PDR/FAR/QER/URR state
-internal/forwarder/   packet classification and forwarding path
-internal/logging/     logging helpers if needed
-configs/              example runtime configs
-tests/ or testdata/   fixtures and integration test assets
-```
+**`config.yaml`**
+- Contains N4 listen address for PFCP.
+- Contains N3 listen address for GTP-U.
+- Contains N6 interface or forwarding target configuration.
+- Contains log level and debug options.
+- Contains optional static sessions for early bring-up before PFCP is complete.
 
-Adjust this structure only when the implementation demands it.
-
-## Design Principles
-
-### Keep the Core Small
-
-This project should remain a lite UPF. Avoid importing large frameworks or implementing broad 3GPP feature sets before the core forwarding path is reliable.
-
-Prefer this order:
-
-1. Configuration and process lifecycle.
-2. GTP-U receive/decode path.
-3. Session state model.
-4. Minimal PFCP association/session establishment support.
-5. Packet classification using PDR-like rules.
-6. FAR-like forwarding behavior.
-7. Observability and test harnesses.
-
-### Make Protocol State Explicit
-
-UPF behavior is stateful. Keep protocol state explicit in named structs rather than hidden behind generic maps.
-
-Important concepts to model clearly:
-
-- PFCP node association state.
-- Local and remote SEIDs.
-- PDRs: packet detection rules.
-- FARs: forwarding action rules.
-- TEIDs and UE IP mappings.
-- N3, N4, and N6 interface addresses.
-- Session lifecycle: establish, modify, delete.
-
-### Separate Control Plane and Data Plane
-
-Do not mix PFCP message handling directly into packet forwarding code.
-
-Recommended separation:
-
-- PFCP/control-plane code mutates session/rule state.
-- Data-plane code reads session/rule state to classify and forward packets.
-- Shared state should have a clear ownership and synchronization strategy.
-
-### Prefer Deterministic Behavior
-
-The implementation should be suitable for tests and packet-level debugging.
-
-- Avoid hidden global mutable state.
-- Make allocators deterministic where possible.
-- Make config validation strict.
-- Make logs include stable identifiers such as SEID, TEID, UE IP, PDR ID, and FAR ID.
-
-## Configuration Conventions
-
-Use configuration for all lab-specific values.
-
-Do not hard-code:
-
-- N4 listen address.
-- N3 listen address.
-- N6 interface or next-hop address.
-- UE IP pools.
-- MTU assumptions.
-- Log level.
-
-A future config file might include:
+Example shape:
 
 ```yaml
 n4:
@@ -118,124 +51,199 @@ features:
   gtpu: true
 ```
 
-When adding configuration fields, add validation immediately. Missing or malformed network settings should fail at startup with actionable errors.
+Configuration must be validated at startup. Missing or malformed interface/IP/port settings should fail fast with actionable errors.
 
-## Protocol Implementation Notes
+### PFCP Structure (`internal/pfcp/`)
 
-### PFCP
+**`server.go`**
+- Owns the UDP PFCP listener on N4.
+- Decodes incoming PFCP messages.
+- Dispatches messages to handlers by type.
+- Encodes and sends PFCP responses.
 
-Implement PFCP incrementally.
+**`association.go`**
+- Handles PFCP Association Setup/Release.
+- Tracks peer node identity and recovery timestamp where supported.
+- Should keep association state explicit rather than implicit in sessions.
 
-Suggested minimum sequence:
+**`session.go`**
+- Handles Session Establishment, Modification, and Deletion.
+- Extracts or updates PDR/FAR/QER/URR-like rule state as support is added.
+- Creates mapping between SEID, TEID, UE IP, and peer endpoint.
 
-1. Association Setup Request/Response.
-2. Session Establishment Request/Response.
-3. Session Modification Request/Response.
-4. Session Deletion Request/Response.
-5. Heartbeat support if needed for compatibility.
+**`ie.go` / `parser.go`**
+- Decodes PFCP Information Elements.
+- Keeps low-level parse logic separate from semantic validation.
+- Should not silently discard unsupported mandatory fields.
 
-Keep IE parsing and semantic validation separate:
+### GTP-U Structure (`internal/gtpu/`)
 
-- Parsing should decode message structure.
-- Validation should check required IEs and project-supported constraints.
-- Application should update session/rule state.
+**`server.go`**
+- Owns the UDP GTP-U listener on N3.
+- Reads datagrams and passes them to packet parsing.
+- Should keep one bad packet from crashing the process.
 
-Do not silently accept unsupported mandatory behavior. Return explicit cause values or errors when a request cannot be honored.
+**`packet.go`**
+- Parses and encodes GTP-U headers.
+- Extracts TEID and payload.
+- Keeps header encode/decode table-testable.
 
-### GTP-U
+**`encap.go` / `decap.go`**
+- Handles GTP-U encapsulation and decapsulation.
+- Should keep uplink and downlink directions explicit.
 
-The GTP-U path should be easy to inspect.
+### Session State Structure (`internal/session/`)
 
-At minimum, keep these steps distinct:
+**`store.go`**
+- In-memory session table.
+- Lookup by local SEID, remote SEID, TEID, and UE IP where applicable.
+- Must be concurrency-safe if PFCP and GTP-U run in separate goroutines.
 
-1. Read UDP packet from N3 socket.
-2. Parse GTP-U header.
-3. Extract TEID.
-4. Look up session/rule state.
-5. Decapsulate payload.
-6. Forward, drop, or buffer based on configured action.
-7. Update counters/logs.
+**`session.go`**
+- Defines session state.
+- Stores local/remote SEIDs distinctly.
+- Stores PDR/FAR-like forwarding rules.
+- Stores tunnel peer information and UE addressing.
 
-For outbound/downlink support, define the reverse path just as explicitly:
+Important: do not collapse local SEID, remote SEID, uplink TEID, and downlink TEID into ambiguous fields. Directionality matters.
 
-1. Receive or inject plain IP packet from N6/test harness.
-2. Match UE IP/session.
-3. Encapsulate with GTP-U using session TEID and peer address.
-4. Send to N3 peer.
+### Forwarding Structure (`internal/forwarder/`)
 
-### Session and Rule Model
+**`classifier.go`**
+- Maps packets to session/rule state.
+- Uses TEID for uplink GTP-U traffic.
+- Uses UE IP or rule state for downlink traffic when supported.
 
-Even if the first implementation is simple, name the rule concepts after UPF/PFCP terminology where practical:
+**`forwarder.go`**
+- Applies FAR-like forwarding actions.
+- Handles forward/drop/buffer behavior as implemented.
+- Emits structured drop reasons.
 
-- `Session`
-- `PDR`
-- `FAR`
-- `QER`
-- `URR`
-- `TEID`
-- `SEID`
+**`n6.go`**
+- Encapsulates N6-side behavior.
+- May begin as a test harness or UDP/TUN abstraction before full interface integration.
 
-This makes future protocol growth easier and keeps code aligned with UPF domain language.
+### Utility Structure (`internal/util/`)
 
-## Error Handling Philosophy
+**`id.go`**
+- Helpers for SEID, TEID, and rule IDs if needed.
+
+**`net.go`**
+- Address parsing and endpoint helpers.
+
+**`log.go`**
+- Logging helpers if the standard logger becomes insufficient.
+
+## Key Design Decisions
+
+### Control/Data Plane Separation
+
+PFCP code should not directly forward packets. GTP-U code should not directly mutate PFCP session semantics.
+
+- PFCP handlers update session/rule state.
+- GTP-U handlers read session/rule state and classify packets.
+- Forwarding code applies actions based on that state.
+
+This separation keeps the implementation debuggable and prevents protocol state from leaking into packet I/O code.
+
+### Explicit Directionality
+
+UPF code is easy to break if identifiers are treated as interchangeable.
+
+Keep these concepts separate:
+
+- Local SEID vs remote SEID.
+- Uplink TEID vs downlink TEID.
+- N3 peer address vs N6 forwarding target.
+- PFCP peer state vs user-plane session state.
+
+Field names should encode direction or ownership where possible, for example `LocalSEID`, `RemoteSEID`, `UplinkTEID`, `DownlinkTEID`.
+
+### Incremental Protocol Support
+
+Do not attempt a full production UPF in one pass. Implement a narrow, testable path first:
+
+1. Config loading and process lifecycle.
+2. GTP-U packet parse/encode tests.
+3. Static TEID/session mapping.
+4. N3 receive path with classification logs.
+5. PFCP Association Setup.
+6. PFCP Session Establishment.
+7. Dynamic PDR/FAR extraction.
+8. Forward/drop actions.
+9. N6 path and downlink encapsulation.
+
+### Error Handling Philosophy
 
 - Fail fast on invalid configuration.
 - Reject unsupported PFCP requests explicitly.
 - Treat malformed packets as packet-level errors, not process-level fatal errors.
-- Do not let one bad packet terminate the UPF process.
-- Do not ignore socket errors; classify them as transient or fatal.
-- Preserve enough context in errors to debug packet/session behavior.
+- Do not silently ignore socket errors.
+- Do not silently drop packets without a reason counter or debug log.
+- Preserve context in errors: endpoint, message type, SEID, TEID, UE IP, PDR ID, FAR ID.
 
-Good error context includes:
+### Observability
 
-- Local and remote endpoint.
-- Message type.
-- SEID or TEID.
-- Session ID if defined.
-- PDR/FAR ID if relevant.
+The project should be easy to debug in a packet lab.
 
-## Logging and Observability
+Logs should identify:
 
-Logs should help debug protocol and forwarding behavior without requiring a debugger.
-
-Useful log fields:
-
-- Event type: startup, PFCP request, PFCP response, packet received, packet forwarded, packet dropped.
-- Interface: N3, N4, N6.
+- Interface: N3, N4, or N6.
+- Event type: startup, PFCP request/response, packet received, packet forwarded, packet dropped.
 - Remote/local endpoint.
-- SEID.
-- TEID.
+- SEID and TEID.
 - UE IP.
 - Rule IDs.
 - Cause or drop reason.
 
-Avoid logging full packet payloads by default. Add a debug flag before printing raw bytes.
+Avoid full payload logging by default. Raw packet dumps should require an explicit debug option.
 
-Future useful metrics:
+## Important Implementation Details
 
-- Packets received on N3.
-- Packets forwarded to N6.
-- Packets encapsulated to N3.
-- Packet drops by reason.
-- Active sessions.
-- Active PDR/FAR counts.
-- PFCP requests by type and result.
+### Repository Status
 
-## Testing Strategy
+At the time this file was written, `lite-upf` only had a minimal `README.md`. Do not assume existing package layout, build commands, or runtime conventions until files exist.
 
-Prioritize small tests before integration tests.
+### Suggested Initial Layout
 
-Suggested test layers:
+```text
+cmd/lite-upf/          CLI entry point
+internal/config/      configuration loading and validation
+internal/pfcp/        PFCP server/session/rule handling
+internal/gtpu/        GTP-U socket, parsing, encapsulation
+internal/session/     session, PDR/FAR/QER/URR state
+internal/forwarder/   packet classification and forwarding path
+configs/              example runtime configs
+testdata/             packet fixtures and config fixtures
+```
 
-1. Unit tests for config validation.
-2. Unit tests for GTP-U header parse/encode.
-3. Unit tests for TEID/session lookup.
-4. Unit tests for PFCP message handling where feasible.
-5. Table-driven tests for rule matching.
-6. Integration tests using a local UDP harness.
-7. Lab tests against a known SMF/UPF tester setup.
+### Concurrency
 
-If using Go, run where applicable:
+PFCP and GTP-U paths will likely run concurrently. Session/rule state must have an explicit synchronization strategy.
+
+Acceptable early options:
+
+- A single `SessionStore` guarded by `sync.RWMutex`.
+- A serialized control loop that owns state and receives update/query messages.
+
+Do not use unsynchronized global maps across packet and PFCP goroutines.
+
+### Configuration
+
+All lab-specific values must come from configuration:
+
+- N4 listen address.
+- N3 listen address.
+- N6 interface or forwarding target.
+- UE IP pool or static UE mappings.
+- MTU assumptions.
+- Log level.
+
+Avoid absolute paths and host-specific interface names in code.
+
+### Testing
+
+If using Go, the normal validation commands should be:
 
 ```bash
 go fmt ./...
@@ -243,100 +251,84 @@ go test ./...
 go vet ./...
 ```
 
-Do not add tests that require root privileges, specific NIC names, or lab IPs unless they are clearly marked as integration/manual tests.
+Packet and protocol logic should be table-tested where possible. Integration tests that require root privileges, TUN/TAP, or specific NIC names must be clearly marked as manual/integration tests.
 
 ## Common Gotchas
 
-1. **N3/N4/N6 confusion**
-   N4 is PFCP control plane. N3 is GTP-U access side. N6 is data network side. Keep them separate in config, logs, and code.
+1. **N3/N4/N6 confusion**: N4 is PFCP control plane, N3 is GTP-U access side, and N6 is data network side. Keep them separate in config, logs, and code.
 
-2. **TEID directionality**
-   Uplink and downlink TEIDs may not be interchangeable. Be explicit about which peer allocated which identifier.
+2. **SEID directionality**: Local and remote SEIDs are not interchangeable. Bugs here break modification and deletion.
 
-3. **SEID directionality**
-   Local SEID and remote SEID have different meanings. Store both with clear field names.
+3. **TEID directionality**: Uplink and downlink TEIDs may have different owners and uses. Store them with explicit names.
 
-4. **Global session maps**
-   A global map may be acceptable for the first prototype, but define synchronization early if PFCP and data-plane goroutines access it concurrently.
+4. **Global session maps**: A global map might work in a prototype, but unsynchronized access will fail once PFCP and GTP-U paths are concurrent.
 
-5. **Silent packet drops**
-   Every intentional drop path should have a reason counter and optional debug log.
+5. **Silent packet drops**: Every intentional drop path needs a reason. Counters are preferable; debug logs are acceptable early on.
 
-6. **Checksum and MTU issues**
-   Data-plane bugs may appear as remote connectivity failures. Keep packet encoding, checksum behavior, and MTU assumptions inspectable.
+6. **Privilege assumptions**: Raw sockets, TUN/TAP, and interface operations may require elevated privileges. Keep privileged code isolated and documented.
 
-7. **Privilege assumptions**
-   Raw sockets, TUN/TAP devices, and interface manipulation may need elevated privileges. Keep privileged operations isolated and documented.
-
-## Agent Workflow
-
-When making changes as an AI coding agent:
-
-1. Inspect current repository contents before designing architecture.
-2. Prefer minimal, reviewable patches.
-3. Do not invent broad production requirements without user confirmation.
-4. Preserve clear separation between PFCP, GTP-U, session state, and forwarding.
-5. Add tests with new protocol parsing or rule-matching logic.
-6. Update `README.md` when user-facing commands or architecture become concrete.
-7. Update this file when project conventions or architecture decisions change.
-8. Report exactly what changed and what was not tested.
-
-## Initial Implementation Roadmap
-
-A reasonable first milestone:
-
-```text
-config loader
-    ↓
-N3 UDP socket listener
-    ↓
-GTP-U header parser
-    ↓
-in-memory session table
-    ↓
-manual/static TEID-to-UE mapping
-    ↓
-packet classification logs
-```
-
-A reasonable second milestone:
-
-```text
-PFCP Association Setup
-    ↓
-PFCP Session Establishment
-    ↓
-PDR/FAR extraction
-    ↓
-dynamic session table updates
-    ↓
-GTP-U forwarding decisions based on PFCP state
-```
-
-A reasonable third milestone:
-
-```text
-N6 forwarding path
-    ↓
-downlink encapsulation
-    ↓
-packet/drop counters
-    ↓
-integration tests
-    ↓
-README usage examples
-```
+7. **MTU/checksum issues**: Connectivity failures may come from packet formatting, MTU, routing, checksum, or TEID mismatch. Do not assume the UPF rule lookup is the only possible fault.
 
 ## Future Enhancement Ideas
 
-Do not implement these opportunistically unless requested:
-
-- TUN/TAP-based N6 integration.
-- eBPF or AF_XDP acceleration.
+- Static-session mode for early GTP-U testing without PFCP.
+- PFCP Heartbeat support.
+- PDR/FAR extraction from real Session Establishment messages.
+- QER/URR support.
+- N6 integration through TUN/TAP.
 - Prometheus metrics endpoint.
 - pcap dump support.
-- PFCP heartbeat and recovery timestamp handling.
-- QER/URR enforcement.
-- Multi-session load testing.
-- CI integration with packet-level unit tests.
-- Compatibility profiles for free5GC or Open5GS.
+- Structured JSON logs.
+- Compatibility profile for free5GC or Open5GS.
+- Packet-level integration tests with local UDP harnesses.
+- CI workflow for `go fmt`, `go test`, and packet parser tests.
+
+## Testing Notes
+
+Start with deterministic local tests before lab integration:
+
+- GTP-U header parse/encode tests.
+- Session store lookup tests.
+- Config validation tests.
+- Rule matching table tests.
+- PFCP handler tests using encoded fixture messages when available.
+
+Only after these pass should lab testing against an SMF or external UPF tester be used as the primary validation path.
+
+## Data Flow Summary
+
+```text
+PFCP Session Establishment
+    ↓
+Decode PFCP IEs
+    ↓
+Validate supported PDR/FAR/session fields
+    ↓
+Update session store
+    ↓
+GTP-U packet arrives on N3
+    ↓
+Parse GTP-U header and TEID
+    ↓
+Lookup session/rule state
+    ↓
+Apply forwarding action
+    ↓
+Forward/drop/log/counter update
+```
+
+For downlink support:
+
+```text
+Plain IP packet from N6/test harness
+    ↓
+Match UE IP/session/rule
+    ↓
+Select tunnel peer and TEID
+    ↓
+Encapsulate as GTP-U
+    ↓
+Send on N3
+```
+
+Keep the entire path explicit and inspectable. That is the main value of `lite-upf`.
