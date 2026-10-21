@@ -10,6 +10,11 @@ easy to inspect and modify.
 See [`AGENTS.md`](AGENTS.md) for the architecture, design decisions, and the
 incremental implementation plan.
 
+> **Status:** the pipeline is green on `main`. The image is published to
+> `ghcr.io/sigdrakon/lite-upf` and is **publicly pullable without a token**
+> (the package inherits visibility from this public repository), so
+> `docker pull ghcr.io/sigdrakon/lite-upf:latest` works on any host.
+
 ---
 
 ## Pipeline overview
@@ -76,6 +81,11 @@ go vet ./...
 
 * **Settings → Actions → General → Workflow permissions → Read and write
   permissions** — needed to push the image to GHCR.
+* **Settings → Branches → Add rule** on `main` — require status checks
+  `Verify`, `Lint` and `Build & publish image` to pass before merging. This is
+  what stops a broken commit from reaching `main`; the
+  `Commit Message Check` workflow is a separate rule and only runs on pull
+  requests, so it stays dormant if you push straight to `main`.
 
 ### 2. Deployment secrets
 
@@ -95,6 +105,11 @@ Optional variable (**Settings → Actions → Variables**):
 | Variable | Example | Purpose |
 |---|---|---|
 | `HEALTHCHECK_URL` | `http://10.0.0.21:8080/healthz` | post-deploy smoke test |
+
+> **Note:** `lite-upf` does not expose an HTTP listener today, so
+> `HEALTHCHECK_URL` is a no-op until a health endpoint is added. The deploy
+> step is skipped with a warning in the meantime; the container-state check in
+> `scripts/deploy.sh` is what actually gates the rollout.
 
 ### 3. Prepare the target host
 
