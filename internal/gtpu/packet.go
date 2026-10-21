@@ -174,16 +174,14 @@ func (h *Header) Marshal() ([]byte, error) {
 	binary.BigEndian.PutUint16(b[2:4], h.Length)
 	binary.BigEndian.PutUint32(b[4:8], h.TEID)
 
-	offset := HeaderLen
+	// The sequence number sits after the optional extension header. The
+	// extension header and the N-PDU number are left as zero bytes.
+	seqOffset := HeaderLen
 	if h.HasExtension {
-		offset += 4
+		seqOffset += 4
 	}
 	if h.HasSequence {
-		binary.BigEndian.PutUint32(b[offset:offset+4], h.SequenceNumber)
-		offset += 4
-	}
-	if h.HasPayloadNumber {
-		offset += 2
+		binary.BigEndian.PutUint32(b[seqOffset:seqOffset+4], h.SequenceNumber)
 	}
 	return b, nil
 }

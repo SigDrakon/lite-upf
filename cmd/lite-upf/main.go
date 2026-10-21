@@ -83,10 +83,14 @@ func run() error {
 	log.Info("shutting down")
 
 	if gtpuServer != nil {
-		_ = gtpuServer.Close()
+		if err := gtpuServer.Close(); err != nil {
+			log.Error("n3: close failed", "error", err.Error())
+		}
 	}
 	if pfcpServer != nil {
-		_ = pfcpServer.Close()
+		if err := pfcpServer.Close(); err != nil {
+			log.Error("n4: close failed", "error", err.Error())
+		}
 	}
 	return nil
 }

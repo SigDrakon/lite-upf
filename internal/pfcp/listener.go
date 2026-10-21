@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"sync"
 )
 
 // Server is the N4 PFCP listener.
@@ -16,7 +15,6 @@ import (
 type Server struct {
 	conn *net.UDPConn
 	log  *slog.Logger
-	wg   sync.WaitGroup
 }
 
 // NewServer binds the UDP socket on addr. The caller must close the server

@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"sync"
 )
 
 // Server is the N3 GTP-U listener.
 type Server struct {
 	conn *net.UDPConn
 	log  *slog.Logger
-	wg   sync.WaitGroup
 }
 
 // NewServer binds the UDP socket on addr. The caller must close the server
