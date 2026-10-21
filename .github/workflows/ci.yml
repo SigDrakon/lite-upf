@@ -159,11 +159,17 @@ jobs:
           tags: ${{ steps.docker_meta.outputs.tags }}
 
       - name: Inspect the published image
+        env:
+          # Passed through the environment: a multi-line value substituted
+          # directly into a `for` list would end the command at the first
+          # newline and break the script.
+          IMAGE_TAGS: ${{ steps.docker_meta.outputs.tags }}
         run: |
           set -uo pipefail
           # GHCR can take a few seconds to make a freshly pushed tag
           # readable, so retry before treating a read failure as real.
-          for tag in ${{ steps.docker_meta.outputs.tags }}; do
+          while IFS= read -r tag; do
+            [ -z "${tag}" ] && continue
             echo "::group::${tag}"
             ok=0
             for attempt in 1 2 3 4 5 6; do
@@ -179,26 +185,31 @@ jobs:
               exit 1
             fi
             echo "::endgroup::"
-          done
+          done <<< "${IMAGE_TAGS}"
 
       - name: Smoke test the published image
+        env:
+          IMAGE_TAGS: ${{ steps.docker_meta.outputs.tags }}
         run: |
           set -euo pipefail
           # Prove the published image actually starts and reports its build
           # metadata, rather than only checking that the manifest exists.
-          image="$(head -n1 <<< '${{ steps.docker_meta.outputs.tags }}')"
+          image="$(head -n1 <<< "${IMAGE_TAGS}")"
           echo "Testing ${image}"
           docker pull "${image}"
           docker run --rm "${image}" -version
 
       - name: Summarise
+        env:
+          IMAGE_TAGS: ${{ steps.docker_meta.outputs.tags }}
         run: |
           {
             echo "### lite-upf image published"
             echo ""
             echo "| Tag | Image |"
             echo "|-----|-------|"
-            for tag in ${{ steps.docker_meta.outputs.tags }}; do
+            while IFS= read -r tag; do
+              [ -z "${tag}" ] && continue
               echo "| \`${tag##*:}\` | \`${tag%:*}\` |"
-            done
+            done <<< "${IMAGE_TAGS}"
           } >> "$GITHUB_STEP_SUMMARY"
