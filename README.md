@@ -92,6 +92,10 @@ go vet ./...
 Only required for `deploy.yml`. Set them under
 **Settings → Secrets and variables → Actions → New repository secret**:
 
+If any of the five secrets below is missing, `deploy.yml` skips the rollout
+with a warning instead of failing: the image is still published, so tagging a
+release works before you have a deployment target.
+
 | Secret | Example | Purpose |
 |---|---|---|
 | `DEPLOY_HOST` | `10.0.0.21` | target host address |

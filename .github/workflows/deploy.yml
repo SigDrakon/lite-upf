@@ -34,7 +34,34 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Check deployment is configured
+        id: check
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          # A tag push also runs this workflow. Without the deployment secrets
+          # there is nowhere to deploy, so skip with a warning instead of
+          # turning an otherwise good release red.
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_PATH DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [ -z "${!name:-}" ]; then
+              missing="${missing} ${name}"
+            fi
+          done
+          if [ -n "${missing}" ]; then
+            echo "::warning::Deployment secrets are not configured (missing:${missing}). The image was published, but nothing was deployed."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve image reference
+        if: steps.check.outputs.enabled == 'true'
         id: image
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -48,6 +75,7 @@ jobs:
           echo "image=ghcr.io/${GITHUB_REPOSITORY}:${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Configure SSH
+        if: steps.check.outputs.enabled == 'true'
         env:
           SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
@@ -60,6 +88,7 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Wait for the image to be published
+        if: steps.check.outputs.enabled == 'true'
         env:
           IMAGE: ${{ steps.image.outputs.image }}
           REGISTRY_USER: ${{ github.actor }}
@@ -81,6 +110,7 @@ jobs:
           exit 1
 
       - name: Deploy
+        if: steps.check.outputs.enabled == 'true'
         env:
           IMAGE: ${{ steps.image.outputs.image }}
           TAG: ${{ steps.image.outputs.tag }}
@@ -96,6 +126,7 @@ jobs:
             'bash -s' < scripts/deploy.sh
 
       - name: Smoke test
+        if: steps.check.outputs.enabled == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -111,7 +142,7 @@ jobs:
           echo "Smoke test OK"
 
       - name: Rollback on failure
-        if: failure()
+        if: failure() && steps.check.outputs.enabled == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
