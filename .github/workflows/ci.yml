@@ -160,12 +160,36 @@ jobs:
 
       - name: Inspect the published image
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          # GHCR can take a few seconds to make a freshly pushed tag
+          # readable, so retry before treating a read failure as real.
           for tag in ${{ steps.docker_meta.outputs.tags }}; do
             echo "::group::${tag}"
-            docker buildx imagetools inspect "${tag}"
+            ok=0
+            for attempt in 1 2 3 4 5 6; do
+              if docker buildx imagetools inspect "${tag}"; then
+                ok=1
+                break
+              fi
+              echo "Attempt ${attempt}/6 failed; retrying in 10s."
+              sleep 10
+            done
+            if [ "${ok}" -ne 1 ]; then
+              echo "::error::Could not inspect ${tag} after 6 attempts."
+              exit 1
+            fi
             echo "::endgroup::"
           done
+
+      - name: Smoke test the published image
+        run: |
+          set -euo pipefail
+          # Prove the published image actually starts and reports its build
+          # metadata, rather than only checking that the manifest exists.
+          image="$(head -n1 <<< '${{ steps.docker_meta.outputs.tags }}')"
+          echo "Testing ${image}"
+          docker pull "${image}"
+          docker run --rm "${image}" -version
 
       - name: Summarise
         run: |
