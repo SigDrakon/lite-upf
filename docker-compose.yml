@@ -1,0 +1,33 @@
+services:
+  lite-upf:
+    # Overwritten by scripts/deploy.sh on every deployment.
+    image: ghcr.io/sigdrakon/lite-upf:latest
+    container_name: lite-upf
+    restart: unless-stopped
+
+    # The forwarding path programs routes and installs iptables NAT/FORWARD
+    # rules, and talks to the SMF over PFCP. NET_ADMIN is required for
+    # route/iptables/netlink operations, NET_RAW for raw netlink sockets.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Forwarding between the access and data networks needs IPv4 forwarding:
+    #   sysctls:
+    #     net.ipv4.ip_forward: "1"
+
+    ports:
+      # PFCP / N4 (control plane, SMF -> UPF)
+      - "8805:8805/udp"
+      # GTP-U / N3 (access plane, RAN -> UPF)
+      - "2152:2152/udp"
+
+    volumes:
+      - ./configs:/lite-upf/config:ro
+      - ./log:/lite-upf/log
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

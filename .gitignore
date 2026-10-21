@@ -1,0 +1,39 @@
+# Build artifacts
+bin/
+build/
+dist/
+out/
+*.exe
+*.test
+*.out
+
+# Logs / captures
+log/
+*.log
+*.pcap
+
+# Coverage
+coverage.out
+coverage.html
+
+# Deployment state
+.deployed-image
+
+# Swap files
+*.swp
+
+# Toolchain
+.idea/
+.vscode/
+vendor/
+
+# emacs/vim
+GPATH
+GRTAGS
+GTAGS
+TAGS
+tags
+cscope.*
+
+# macOS
+.DS_Store

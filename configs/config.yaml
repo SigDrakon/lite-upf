@@ -1,0 +1,25 @@
+# lite-upf example runtime configuration.
+#
+# Every lab-specific value lives here. The binary must not hard-code
+# addresses, interface names or paths.
+
+n4:
+  # PFCP control plane. The SMF establishes the association on this endpoint.
+  listen: "0.0.0.0:8805"
+
+n3:
+  # GTP-U access side. The RAN tunnel terminates here.
+  listen: "0.0.0.0:2152"
+
+n6:
+  # Data-network side used for downlink forwarding.
+  interface: "eth0"
+
+logging:
+  # trace | debug | info | warn | error
+  level: "info"
+
+features:
+  # Toggle protocol paths on while bringing the UPF up incrementally.
+  pfcp: true
+  gtpu: true

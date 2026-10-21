@@ -1,0 +1,34 @@
+# Build artifacts
+bin/
+build/
+dist/
+out/
+*.exe
+*.test
+*.out
+
+# Version metadata generated at build time
+version.txt
+
+# Logs / captures
+log/
+*.log
+*.pcap
+
+# CI / editor
+.github/
+.git/
+.gitignore
+.idea/
+.vscode/
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md
+AGENTS.md
+Makefile
+
+# Docs & assets not needed at runtime
+docs/
+*.md
+!README.md
